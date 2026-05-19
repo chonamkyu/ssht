@@ -9,9 +9,14 @@ A free, open-source interactive SSH session manager built for developers and AI 
 
 ## Screenshots
 
-| Interactive TUI | Session Control | Auto Registration |
-|---|---|---|
-| ![TUI](./assets/img1.png) | ![Sessions](./assets/img2.png) | ![Auto Register](./assets/img3.png) |
+### Interactive TUI
+![TUI](./assets/img1.png)
+
+### Session Control
+![Sessions](./assets/img2.png)
+
+### Auto Registration
+![Auto Register](./assets/img3.png)
 
 ## Features
 
