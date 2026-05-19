@@ -1,6 +1,9 @@
 # ssht
 
-A fast, interactive SSH session manager built for developers and AI agents. Manage hosts, maintain persistent background sessions (like tmux), and control them programmatically with keystroke injection.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8.svg)](https://go.dev)
+
+A free, open-source interactive SSH session manager built for developers and AI agents. Manage hosts, maintain persistent background sessions (like tmux), and control them programmatically with keystroke injection.
 
 ![ssht demo](./assets/demo.gif)
 
@@ -238,4 +241,4 @@ Supported platforms (built via `go build`):
 
 ## License
 
-MIT
+This project is free and open-source software, licensed under the [MIT License](./LICENSE). You are free to use, modify, and distribute it without restriction.
