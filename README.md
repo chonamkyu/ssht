@@ -5,6 +5,8 @@
 
 A free, open-source interactive SSH session manager built for developers and AI agents. Manage hosts, maintain persistent background sessions (like tmux), and control them programmatically with keystroke injection.
 
+**Designed for AI-assisted workflows** — AI agents (Claude Code, Cursor, Copilot, custom MCP tools) can start SSH sessions, send commands, read output, and interrupt processes without human intervention. Perfect for automated deployment, remote debugging, and infrastructure management through natural language.
+
 ![ssht demo](./assets/demo.gif)
 
 ## Screenshots
