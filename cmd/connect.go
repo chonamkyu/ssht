@@ -53,21 +53,28 @@ Examples:
 		}
 
 		if isNew {
-			fmt.Printf("\n  [+] New host registered: %s\n", host.Name)
-			fmt.Printf("      Host: %s, Port: %d, User: %s\n\n", host.Host, host.Port, host.User)
+			fmt.Printf("\n  [+] New host registered: %s\n", host.Host)
+			fmt.Printf("      User: %s, Port: %d\n\n", host.User, host.Port)
 
 			if err := offerKeySetup(cfg, host); err != nil {
 				fmt.Printf("  [!] Key setup skipped: %v\n\n", err)
 			}
+
+			resolveHostname(host, cfg)
+			fmt.Printf("  [+] Hostname resolved: %s\n\n", host.Name)
 		}
 
 		bg, _ := cmd.Flags().GetBool("background")
 		if bg {
-			id, err := session.StartBackground(host)
+			if session.IsDaemon() {
+				session.RunDaemon(host)
+				return nil
+			}
+			pid, err := session.SpawnDaemon(host)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Session started in background: %s (id: %d)\n", host.Name, id)
+			fmt.Printf("Session started in background: %s (pid: %d)\n", host.Name, pid)
 			return nil
 		}
 
@@ -99,9 +106,6 @@ func parseAndSaveHost(cfg *config.Config, addr string) (*config.Host, error) {
 
 	h.Host = addr
 	h.Name = h.Host
-	if h.User != "" {
-		h.Name = h.User + "@" + h.Host
-	}
 	if h.User == "" {
 		h.User = os.Getenv("USER")
 	}
@@ -112,6 +116,25 @@ func parseAndSaveHost(cfg *config.Config, addr string) (*config.Host, error) {
 	}
 
 	return &cfg.Hosts[len(cfg.Hosts)-1], nil
+}
+
+func resolveHostname(host *config.Host, cfg *config.Config) {
+	client, err := sshclient.Connect(host)
+	if err != nil {
+		return
+	}
+	defer client.Close()
+
+	output, err := client.Execute("hostname")
+	if err != nil {
+		return
+	}
+
+	name := strings.TrimSpace(output)
+	if name != "" && name != host.Name {
+		host.Name = name
+		cfg.Save()
+	}
 }
 
 func offerKeySetup(cfg *config.Config, host *config.Host) error {

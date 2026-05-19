@@ -19,6 +19,7 @@ type bufferReader struct {
 	buf    *RingBuffer
 	notify chan struct{}
 	closed bool
+	offset int
 }
 
 func NewRingBuffer(size int) *RingBuffer {
@@ -96,12 +97,13 @@ func (r *bufferReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	content := r.buf.Contents()
-	if len(content) == 0 {
+	for {
+		content := r.buf.Contents()
+		if r.offset < len(content) {
+			n := copy(p, content[r.offset:])
+			r.offset += n
+			return n, nil
+		}
 		<-r.notify
-		content = r.buf.Contents()
 	}
-
-	n := copy(p, content)
-	return n, nil
 }

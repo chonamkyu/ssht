@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/chonamkyu/ssht/internal/keys"
 	"github.com/chonamkyu/ssht/internal/session"
@@ -15,13 +16,14 @@ var sendCmd = &cobra.Command{
 
 --cmd sends text with a trailing newline (executes the command).
 --key sends control keys or key sequences.
+--output reads N lines from the session after sending (like tail).
 
 Examples:
   ssht send 1 --cmd "ls -la"
-  ssht send 1 --cmd "docker ps"
+  ssht send 1 --cmd "ls -la" --output 20
+  ssht send 1 --cmd "docker ps" -o 50
   ssht send 1 --key "ctrl+c"
-  ssht send 1 --key "ctrl+d"
-  ssht send 1 --key "up,up,enter"`,
+  ssht send 1 --key "up,up,enter" -o 10`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := parseSessionID(args[0])
@@ -31,6 +33,7 @@ Examples:
 
 		cmdFlag, _ := cmd.Flags().GetString("cmd")
 		keyFlag, _ := cmd.Flags().GetString("key")
+		output, _ := cmd.Flags().GetInt("output")
 
 		if cmdFlag == "" && keyFlag == "" {
 			return fmt.Errorf("must specify --cmd or --key")
@@ -51,11 +54,25 @@ Examples:
 			payload = append(payload, parsed...)
 		}
 
-		return session.SendInput(id, payload)
+		if err := session.SendInput(id, payload); err != nil {
+			return err
+		}
+
+		if output > 0 {
+			time.Sleep(500 * time.Millisecond)
+			out, err := session.ReadOutput(id, output)
+			if err != nil {
+				return err
+			}
+			fmt.Print(out)
+		}
+
+		return nil
 	},
 }
 
 func init() {
 	sendCmd.Flags().StringP("cmd", "c", "", "Command to execute (auto-appends enter)")
 	sendCmd.Flags().StringP("key", "k", "", "Key sequence to send (e.g., ctrl+c, up,enter)")
+	sendCmd.Flags().IntP("output", "o", 0, "Read N lines from session after sending")
 }

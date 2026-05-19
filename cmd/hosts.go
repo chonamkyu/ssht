@@ -75,9 +75,33 @@ var hostsRemoveCmd = &cobra.Command{
 	},
 }
 
+var hostsRenameCmd = &cobra.Command{
+	Use:   "rename <old-name> <new-name>",
+	Short: "Rename a host",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+
+		if err := cfg.RenameHost(args[0], args[1]); err != nil {
+			return err
+		}
+
+		if err := cfg.Save(); err != nil {
+			return err
+		}
+
+		fmt.Printf("Host renamed: '%s' -> '%s'\n", args[0], args[1])
+		return nil
+	},
+}
+
 func init() {
 	hostsCmd.AddCommand(hostsAddCmd)
 	hostsCmd.AddCommand(hostsRemoveCmd)
+	hostsCmd.AddCommand(hostsRenameCmd)
 
 	hostsAddCmd.Flags().String("name", "", "Host alias name")
 	hostsAddCmd.Flags().String("host", "", "Hostname or IP")
@@ -101,13 +125,14 @@ func hostsListRun() error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tHOST\tUSER\tPORT\tSOURCE\tTAGS")
+	fmt.Fprintln(w, "NAME\tUSER\tADDRESS\tSOURCE\tTAGS")
 	for _, h := range cfg.Hosts {
 		source := "ssht"
 		if h.Source == "ssh_config" {
-			source = "~/.ssh/config"
+			source = "ssh"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%v\n", h.Name, h.Host, h.User, h.Port, source, h.Tags)
+		addr := fmt.Sprintf("%s:%d", h.Host, h.Port)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%v\n", h.Name, h.User, addr, source, h.Tags)
 	}
 	w.Flush()
 	return nil

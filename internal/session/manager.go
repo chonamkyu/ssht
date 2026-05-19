@@ -12,6 +12,7 @@ import (
 
 	"github.com/chonamkyu/ssht/internal/config"
 	sshclient "github.com/chonamkyu/ssht/internal/ssh"
+	"golang.org/x/term"
 )
 
 type SessionInfo struct {
@@ -96,13 +97,12 @@ func StartBackground(host *config.Host) (int, error) {
 }
 
 func StartInteractive(host *config.Host) error {
-	client, err := sshclient.Connect(host)
+	id, err := StartBackground(host)
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	return client.Shell(os.Stdin, os.Stdout, os.Stderr)
+	return Attach(id)
 }
 
 func List() ([]SessionInfo, error) {
@@ -123,19 +123,52 @@ func List() ([]SessionInfo, error) {
 
 func Attach(id int) error {
 	s := getSession(id)
-	if s == nil {
-		return fmt.Errorf("session %d not found", id)
+	if s != nil {
+		return attachLocal(s)
 	}
 
-	fmt.Printf("Attached to session %d (%s). Press Ctrl+B then 'd' to detach.\n", id, s.Info.HostName)
+	// Try socket-based attach for daemon sessions
+	conn, err := connectToSocket(id)
+	if err != nil {
+		return fmt.Errorf("session %d not found", id)
+	}
+	defer conn.Close()
 
+	return attachRemote(conn)
+}
+
+func attachLocal(s *Session) error {
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("setting raw terminal: %w", err)
+	}
+	defer term.Restore(fd, oldState)
+
+	reader := s.buffer.NewReader()
 	go func() {
-		io.Copy(os.Stdout, s.buffer.NewReader())
+		buf := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				os.Stdout.Write(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
 	}()
 
 	buf := make([]byte, 1024)
 	detachState := false
 	for {
+		select {
+		case <-s.done:
+			fmt.Print("\r\nConnection closed.\r\n")
+			return nil
+		default:
+		}
+
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
 			return err
@@ -143,14 +176,85 @@ func Attach(id int) error {
 
 		for i := 0; i < n; i++ {
 			if detachState && buf[i] == 'd' {
-				fmt.Println("\nDetached.")
+				fmt.Print("\r\nDetached.\r\n")
 				return nil
 			}
 			detachState = buf[i] == 0x02 // Ctrl+B
 		}
 
 		if !detachState {
+			s.mu.Lock()
 			s.stdin.Write(buf[:n])
+			s.mu.Unlock()
+		} else if n > 1 {
+			s.mu.Lock()
+			s.stdin.Write(buf[:n])
+			s.mu.Unlock()
+			detachState = false
+		}
+	}
+}
+
+func attachRemote(conn net.Conn) error {
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("setting raw terminal: %w", err)
+	}
+	defer term.Restore(fd, oldState)
+
+	// Send attach request
+	enc := json.NewEncoder(conn)
+	if err := enc.Encode(socketMessage{Action: "attach"}); err != nil {
+		return err
+	}
+
+	done := make(chan struct{})
+
+	// Read output from socket → stdout
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := conn.Read(buf)
+			if n > 0 {
+				os.Stdout.Write(buf[:n])
+			}
+			if err != nil {
+				close(done)
+				return
+			}
+		}
+	}()
+
+	// Read stdin → send to socket
+	buf := make([]byte, 1024)
+	detachState := false
+	for {
+		select {
+		case <-done:
+			fmt.Print("\r\nConnection closed.\r\n")
+			return nil
+		default:
+		}
+
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			return err
+		}
+
+		for i := 0; i < n; i++ {
+			if detachState && buf[i] == 'd' {
+				fmt.Print("\r\nDetached.\r\n")
+				return nil
+			}
+			detachState = buf[i] == 0x02 // Ctrl+B
+		}
+
+		if !detachState {
+			conn.Write(buf[:n])
+		} else if n > 1 {
+			conn.Write(buf[:n])
+			detachState = false
 		}
 	}
 }
@@ -203,12 +307,33 @@ func Kill(id int) error {
 	sessionsMu.Unlock()
 
 	if !ok {
+		// Try socket connection
 		sockPath := socketPath(id)
 		conn, err := net.Dial("unix", sockPath)
 		if err != nil {
-			return fmt.Errorf("session %d not found", id)
+			// Try reading from session info file
+			infoPath := filepath.Join(sessionsDir(), fmt.Sprintf("session-%d.json", id))
+			data, rerr := os.ReadFile(infoPath)
+			if rerr != nil {
+				return fmt.Errorf("session %d not found", id)
+			}
+			var info SessionInfo
+			if jerr := json.Unmarshal(data, &info); jerr != nil {
+				return fmt.Errorf("session %d not found", id)
+			}
+			conn, err = net.Dial("unix", info.Socket)
+			if err != nil {
+				// Socket dead, just clean up files
+				os.Remove(infoPath)
+				os.Remove(info.Socket)
+				return nil
+			}
 		}
-		conn.Close()
+		defer conn.Close()
+
+		enc := json.NewEncoder(conn)
+		enc.Encode(socketMessage{Action: "kill"})
+
 		os.Remove(sockPath)
 		removeSessionInfo(id)
 		return nil
@@ -313,6 +438,58 @@ func (s *Session) handleSocketConn(conn net.Conn) {
 		enc.Encode(socketResponse{OK: true, Data: output})
 	case "info":
 		enc.Encode(socketResponse{OK: true, Data: s.Info.Status})
+	case "kill":
+		enc.Encode(socketResponse{OK: true})
+		s.client.Close()
+		os.Exit(0)
+	case "attach":
+		s.handleAttach(conn)
+	}
+}
+
+func (s *Session) handleAttach(conn net.Conn) {
+	reader := s.buffer.NewReader()
+
+	done := make(chan struct{})
+
+	// Stream buffer output to the attached client
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				if _, werr := conn.Write(buf[:n]); werr != nil {
+					close(done)
+					return
+				}
+			}
+			if err != nil {
+				close(done)
+				return
+			}
+		}
+	}()
+
+	// Read input from attached client → stdin
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := conn.Read(buf)
+			if n > 0 {
+				s.mu.Lock()
+				s.stdin.Write(buf[:n])
+				s.mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Wait for disconnect or session end
+	select {
+	case <-done:
+	case <-s.done:
 	}
 }
 

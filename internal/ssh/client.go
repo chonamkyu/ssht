@@ -64,6 +64,13 @@ func (c *Client) Execute(command string) (string, error) {
 }
 
 func (c *Client) Shell(stdin io.Reader, stdout, stderr io.Writer) error {
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("setting raw terminal: %w", err)
+	}
+	defer term.Restore(fd, oldState)
+
 	session, err := c.conn.NewSession()
 	if err != nil {
 		return err
@@ -80,7 +87,15 @@ func (c *Client) Shell(stdin io.Reader, stdout, stderr io.Writer) error {
 		ssh.TTY_OP_OSPEED: 14400,
 	}
 
-	if err := session.RequestPty("xterm-256color", 24, 80, modes); err != nil {
+	w, h, _ := term.GetSize(fd)
+	if w == 0 {
+		w = 80
+	}
+	if h == 0 {
+		h = 24
+	}
+
+	if err := session.RequestPty("xterm-256color", h, w, modes); err != nil {
 		return fmt.Errorf("requesting PTY: %w", err)
 	}
 

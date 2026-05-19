@@ -16,6 +16,7 @@ type Host struct {
 	Key          string   `yaml:"key,omitempty"`
 	Password     string   `yaml:"password,omitempty"`
 	PasswordAuth bool     `yaml:"password_auth,omitempty"`
+	Group        string   `yaml:"group,omitempty"`
 	Tags         []string `yaml:"tags,omitempty"`
 	Source       string   `yaml:"-"`
 }
@@ -116,6 +117,19 @@ func (c *Config) FindByTag(tag string) []Host {
 		}
 	}
 	return result
+}
+
+func (c *Config) RenameHost(oldName, newName string) error {
+	for i, h := range c.Hosts {
+		if h.Name == oldName {
+			if h.Source == "ssh_config" {
+				return fmt.Errorf("cannot rename host from ~/.ssh/config (read-only)")
+			}
+			c.Hosts[i].Name = newName
+			return nil
+		}
+	}
+	return fmt.Errorf("host not found: %s", oldName)
 }
 
 func (c *Config) RemoveHost(name string) error {
