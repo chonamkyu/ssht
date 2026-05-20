@@ -18,6 +18,7 @@ type Host struct {
 	PasswordAuth bool     `yaml:"password_auth,omitempty"`
 	Group        string   `yaml:"group,omitempty"`
 	Tags         []string `yaml:"tags,omitempty"`
+	ProxyJump    string   `yaml:"proxy_jump,omitempty"`
 	Source       string   `yaml:"-"`
 }
 

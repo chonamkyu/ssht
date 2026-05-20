@@ -74,6 +74,10 @@ func parseSSHConfig() []Host {
 				}
 				current.Key = val
 			}
+		case "proxyjump":
+			if current != nil {
+				current.ProxyJump = val
+			}
 		}
 	}
 

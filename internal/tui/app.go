@@ -43,6 +43,7 @@ const (
 	modeSearch
 	modeRename
 	modeConfirmDelete
+	modeConfirmJump
 )
 
 type model struct {
@@ -61,6 +62,7 @@ type model struct {
 	connectTarget *config.Host
 	attachID      int // session ID to attach to (0 = new session)
 	sessions      map[string]int
+	jumpHost      *config.Host
 }
 
 func buildTree(hosts []config.Host, collapsed map[string]bool) []treeItem {
@@ -133,6 +135,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateRename(msg)
 	case modeConfirmDelete:
 		return m.updateConfirmDelete(msg)
+	case modeConfirmJump:
+		return m.updateConfirmJump(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -155,6 +159,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toggleFolder()
 			} else if item.host != nil {
 				m.connectTarget = item.host
+				if m.jumpHost != nil && m.jumpHost.Name != item.host.Name {
+					m.connectTarget.ProxyJump = m.jumpHost.Name
+				}
 				m.attachID = 0
 				return m, tea.Quit
 			}
@@ -172,6 +179,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				} else {
 					m.err = fmt.Errorf("no active session for %s", item.host.Name)
+				}
+			}
+		case "J":
+			item := m.items[m.cursor]
+			if !item.isFolder && item.host != nil {
+				if m.jumpHost != nil && m.jumpHost.Name == item.host.Name {
+					m.jumpHost = nil
+				} else {
+					m.jumpHost = item.host
 				}
 			}
 		case "h", "left":
@@ -331,6 +347,38 @@ func (m model) updateConfirmDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m model) updateConfirmJump(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "y", "Y":
+			if m.jumpHost != nil {
+				cfg, err := config.Load()
+				if err == nil {
+					h, _ := cfg.FindHost(m.jumpHost.Name)
+					if h != nil {
+						h.Tags = appendUnique(h.Tags, "jump")
+						cfg.Save()
+					}
+				}
+			}
+			m.mode = modeNormal
+		case "n", "N", "esc":
+			m.mode = modeNormal
+		}
+	}
+	return m, nil
+}
+
+func appendUnique(slice []string, item string) []string {
+	for _, s := range slice {
+		if s == item {
+			return slice
+		}
+	}
+	return append(slice, item)
 }
 
 func (m model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -509,6 +557,10 @@ func (m model) View() string {
 				}
 			}
 
+			if m.jumpHost != nil && m.jumpHost.Name == item.host.Name {
+				detail += "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")).Render("[JUMP]")
+			}
+
 			if selected {
 				name = selStyle.Render(item.host.Name)
 			}
@@ -557,11 +609,22 @@ func (m model) View() string {
 		}
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(
 			fmt.Sprintf("  Delete '%s'? (y/n)", name)))
+	case modeConfirmJump:
+		name := ""
+		if m.jumpHost != nil {
+			name = m.jumpHost.Name
+		}
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(
+			fmt.Sprintf("  Save '%s' as jump host? (y/n)", name)))
 	default:
 		if m.err != nil {
 			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(fmt.Sprintf("  %v", m.err)))
 		} else {
-			b.WriteString(helpStyle.Render("  enter: new session | c: attach | b: bg | K: kill | r: rename | d: del | g: group | i: IP | t: test | ?: search | q: quit"))
+			help := "  enter: new session | c: attach | J: jump | b: bg | K: kill | r: rename | d: del | g: group | i: IP | t: test | ?: search | q: quit"
+			if m.jumpHost != nil {
+				help = fmt.Sprintf("  jump: %s | enter: connect via jump | J: clear jump | q: quit", m.jumpHost.Name)
+			}
+			b.WriteString(helpStyle.Render(help))
 		}
 	}
 

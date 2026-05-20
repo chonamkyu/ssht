@@ -13,12 +13,17 @@ import (
 )
 
 type Client struct {
-	conn    *ssh.Client
-	host    *config.Host
-	session *ssh.Session
+	conn      *ssh.Client
+	host      *config.Host
+	session   *ssh.Session
+	jumpConn  *ssh.Client
 }
 
 func Connect(host *config.Host) (*Client, error) {
+	return ConnectWithJump(host, nil)
+}
+
+func ConnectWithJump(host *config.Host, jumpHost *config.Host) (*Client, error) {
 	authMethods, err := buildAuthMethods(host)
 	if err != nil {
 		return nil, err
@@ -37,6 +42,45 @@ func Connect(host *config.Host) (*Client, error) {
 	}
 
 	addr := net.JoinHostPort(host.Host, fmt.Sprintf("%d", host.Port))
+
+	if jumpHost == nil && host.ProxyJump != "" {
+		if cfg, err := config.Load(); err == nil {
+			if found, ferr := cfg.FindHost(host.ProxyJump); ferr == nil {
+				jumpHost = found
+			}
+		}
+		if jumpHost == nil {
+			jumpHost = &config.Host{
+				Name: host.ProxyJump,
+				Host: host.ProxyJump,
+				Port: 22,
+			}
+		}
+	}
+
+	if jumpHost != nil {
+		jumpClient, err := connectDirect(jumpHost)
+		if err != nil {
+			return nil, fmt.Errorf("connecting to jump host %s: %w", jumpHost.Name, err)
+		}
+
+		netConn, err := jumpClient.Dial("tcp", addr)
+		if err != nil {
+			jumpClient.Close()
+			return nil, fmt.Errorf("tunneling through %s to %s: %w", jumpHost.Name, host.Name, err)
+		}
+
+		c, chans, reqs, err := ssh.NewClientConn(netConn, addr, cfg)
+		if err != nil {
+			netConn.Close()
+			jumpClient.Close()
+			return nil, fmt.Errorf("connecting to %s via %s: %w", host.Name, jumpHost.Name, err)
+		}
+
+		conn := ssh.NewClient(c, chans, reqs)
+		return &Client{conn: conn, host: host, jumpConn: jumpClient}, nil
+	}
+
 	conn, err := ssh.Dial("tcp", addr, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to %s: %w", host.Name, err)
@@ -45,11 +89,37 @@ func Connect(host *config.Host) (*Client, error) {
 	return &Client{conn: conn, host: host}, nil
 }
 
+func connectDirect(host *config.Host) (*ssh.Client, error) {
+	authMethods, err := buildAuthMethods(host)
+	if err != nil {
+		return nil, err
+	}
+
+	user := host.User
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            authMethods,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	addr := net.JoinHostPort(host.Host, fmt.Sprintf("%d", host.Port))
+	return ssh.Dial("tcp", addr, cfg)
+}
+
 func (c *Client) Close() error {
 	if c.session != nil {
 		c.session.Close()
 	}
-	return c.conn.Close()
+	err := c.conn.Close()
+	if c.jumpConn != nil {
+		c.jumpConn.Close()
+	}
+	return err
 }
 
 func (c *Client) Execute(command string) (string, error) {

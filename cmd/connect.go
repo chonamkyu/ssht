@@ -64,6 +64,11 @@ Examples:
 			fmt.Printf("  [+] Hostname resolved: %s\n\n", host.Name)
 		}
 
+		jump, _ := cmd.Flags().GetString("jump")
+		if jump != "" {
+			host.ProxyJump = jump
+		}
+
 		bg, _ := cmd.Flags().GetBool("background")
 		if bg {
 			if session.IsDaemon() {
@@ -85,6 +90,7 @@ Examples:
 func init() {
 	connectCmd.Flags().BoolP("background", "b", false, "Start session in background")
 	connectCmd.Flags().StringP("password", "p", "", "SSH password")
+	connectCmd.Flags().StringP("jump", "j", "", "Jump host (bastion) for proxy connection")
 }
 
 func parseAndSaveHost(cfg *config.Config, addr string) (*config.Host, error) {
