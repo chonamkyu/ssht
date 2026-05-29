@@ -17,7 +17,7 @@ var execCmd = &cobra.Command{
 	Long: `Execute a command on multiple hosts simultaneously.
 
 Examples:
-  ssht exec "uptime" -h prod-web-1,prod-web-2
+  ssht exec "uptime" -H prod-web-1,prod-web-2
   ssht exec "df -h" --tag prod
   ssht exec "systemctl status nginx" --tag web --json`,
 	Args: cobra.ExactArgs(1),
@@ -75,7 +75,7 @@ Examples:
 }
 
 func init() {
-	execCmd.Flags().StringP("hosts", "h", "", "Comma-separated list of host names")
+	execCmd.Flags().StringP("hosts", "H", "", "Comma-separated list of host names")
 	execCmd.Flags().StringP("tag", "t", "", "Execute on all hosts with this tag")
 	execCmd.Flags().Bool("json", false, "Output results as JSON")
 }
